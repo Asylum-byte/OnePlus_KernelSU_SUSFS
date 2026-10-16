@@ -794,7 +794,8 @@ runs:
           if [[ "$url" == *"github.com"* ]]; then
               download_url="${url%.git}/archive/refs/heads/${branch}.tar.gz"
           elif [[ "$url" == *"gitlab.com"* ]]; then
-              download_url="${url%.git}/-/archive/${branch}/${repo_name}-${branch}.tar.gz"
+              local project_path=$(echo "$url" | sed -E 's#^https?://gitlab\.com/##; s#\.git$##; s#/#%2F#g')
+              download_url="https://gitlab.com/api/v4/projects/${project_path}/repository/archive.tar.gz?sha=${branch}"
           else
               echo "::error::Unsupported host: $url"
               return 1

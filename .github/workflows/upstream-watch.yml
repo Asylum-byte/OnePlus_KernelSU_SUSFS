@@ -70,8 +70,14 @@ jobs:
               "- `\(.sha[:7])` \(.commit.author.date[:10]) – \(.commit.message | split("\n")[0])"')
             local title="[Update] $label: new commits in main"
             local body
-            body=$(printf '**%s** has **%s** commit(s) that are not in your fork yet.\n\nLatest (max. 15):\n%s\n\n[Show comparison](https://github.com/%s/compare/main...%s:main)\n\nTo take them over: on the GitHub page of your fork, **Sync fork**, or ask Claude to merge them. Close this issue afterwards; on the next change a new one is opened.\n' \
-                   "$owner_repo" "$ahead" "$list" "$REPO" "$owner")
+            local hint
+            if [ "$owner" = "Coding-BR" ]; then
+              hint='Übernehmen: auf der GitHub-Seite deines Forks **Sync fork** (Adriano ist dein direkter Upstream), oder Claude bitten.'
+            else
+              hint='**Nicht blind übernehmen:** Das ist der Original-Upstream ohne Adrianos RedMagic-Fixes. „Sync fork“ holt nur Adrianos Stand. Wenn hier etwas Wichtiges dabei ist, Claude bitten, gezielt zu übernehmen.'
+            fi
+            body=$(printf '**%s** hat **%s** Commit(s), die noch nicht in deinem Fork sind.\n\nNeueste (max. 15):\n%s\n\n[Vergleich ansehen](https://github.com/%s/compare/main...%s:main)\n\n%s\n\nDieses Issue wird bei neuen Commits automatisch aktualisiert. Nach dem Übernehmen schließen.\n' \
+                   "$owner_repo" "$ahead" "$list" "$REPO" "$owner" "$hint")
             local open_num
             open_num=$(gh issue list --repo "$REPO" --state open --limit 200 --json number,title \
                        -q "[.[] | select(.title == \"$title\")][0].number // empty" 2>/dev/null || true)
@@ -97,7 +103,7 @@ jobs:
             local assets
             assets=$(echo "$rel" | jq -r '.assets[:10][] | "- [\(.name)](\(.browser_download_url))"')
             notify "[Release] $label: $tag" \
-              "$(printf '**%s** – new release: **%s** (%s)\n\n%s\n\nFiles:\n%s\n' "$owner_repo" "$name" "$date" "$url" "${assets:-–}")"
+              "$(printf '**%s** – neues Release: **%s** (%s)\n\n%s\n\nDateien:\n%s\n' "$owner_repo" "$name" "$date" "$url" "${assets:-–}")"
           }
 
           summary "### Kernel sources"

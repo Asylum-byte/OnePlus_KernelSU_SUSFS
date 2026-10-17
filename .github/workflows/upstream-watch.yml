@@ -1,0 +1,119 @@
+name: 🔔 Upstream Watch
+
+# Checks once a day whether Adriano (Coding-BR), WildKernels, KernelSU-Next
+# or the SuSFS module have something new, and opens an issue in this repo
+# for each new item. GitHub then notifies you (app / email).
+# Nothing is built or changed automatically.
+
+permissions:
+  contents: read
+  issues: write
+
+on:
+  schedule:
+    - cron: '17 6 * * *' # daily, 06:17 UTC (08:17 German summer time)
+  workflow_dispatch:
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Check upstream
+        shell: bash
+        run: |
+          set -uo pipefail
+          FAILED_NOTIFY=0
+          NEW_COUNT=0
+
+          summary() { echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
+          summary "## 🔔 Upstream Watch – $(date -u '+%Y-%m-%d %H:%M UTC')"
+          summary ""
+
+          # Open an issue unless one with exactly this title already exists (open or closed).
+          notify() {
+            local title="$1" body="$2"
+            local exists
+            exists=$(gh issue list --repo "$REPO" --state all --limit 200 --json title \
+                     -q "[.[] | select(.title == \"$title\")] | length" 2>/dev/null || echo "ERR")
+            if [ "$exists" = "ERR" ]; then
+              echo "::warning::Could not read issues (are Issues enabled in Settings → General → Features?)"
+              summary "- ⚠️ **$title** (no issue created – Issues disabled?)"
+              FAILED_NOTIFY=1; NEW_COUNT=$((NEW_COUNT+1)); return
+            fi
+            if [ "$exists" != "0" ]; then
+              summary "- ✔️ already reported: $title"; return
+            fi
+            if gh issue create --repo "$REPO" --title "$title" --body "$body" >/dev/null; then
+              summary "- 🆕 **$title**"; NEW_COUNT=$((NEW_COUNT+1))
+            else
+              summary "- ⚠️ **$title** (issue creation failed)"; FAILED_NOTIFY=1; NEW_COUNT=$((NEW_COUNT+1))
+            fi
+          }
+
+          # Commits in an upstream fork that are not yet in this fork's main.
+          # Keeps ONE open issue per upstream and updates it; close it after you synced.
+          check_commits() {
+            local label="$1" owner_repo="$2"
+            local owner="${owner_repo%%/*}"
+            local data ahead
+            data=$(gh api "repos/$REPO/compare/main...${owner}:main" 2>/dev/null) || {
+              summary "- ⚠️ $label: compare failed"; return; }
+            ahead=$(echo "$data" | jq -r '.ahead_by')
+            if [ "$ahead" = "0" ] || [ -z "$ahead" ]; then
+              summary "- ✅ $label: no new commits"; return
+            fi
+            local list
+            list=$(echo "$data" | jq -r '.commits | reverse | .[:15][] |
+              "- `\(.sha[:7])` \(.commit.author.date[:10]) – \(.commit.message | split("\n")[0])"')
+            local title="[Update] $label: new commits in main"
+            local body
+            body=$(printf '**%s** has **%s** commit(s) that are not in your fork yet.\n\nLatest (max. 15):\n%s\n\n[Show comparison](https://github.com/%s/compare/main...%s:main)\n\nTo take them over: on the GitHub page of your fork, **Sync fork**, or ask Claude to merge them. Close this issue afterwards; on the next change a new one is opened.\n' \
+                   "$owner_repo" "$ahead" "$list" "$REPO" "$owner")
+            local open_num
+            open_num=$(gh issue list --repo "$REPO" --state open --limit 200 --json number,title \
+                       -q "[.[] | select(.title == \"$title\")][0].number // empty" 2>/dev/null || true)
+            if [ -n "$open_num" ]; then
+              gh issue edit "$open_num" --repo "$REPO" --body "$body" >/dev/null || true
+              summary "- 🔄 $label: $ahead new commit(s) (issue #$open_num updated)"
+            else
+              notify "$title" "$body"
+            fi
+          }
+
+          # Newest release of a repo (including pre-releases).
+          check_release() {
+            local label="$1" owner_repo="$2"
+            local rel tag name url date
+            rel=$(gh api "repos/$owner_repo/releases?per_page=1" -q '.[0]' 2>/dev/null)
+            if [ -z "$rel" ] || [ "$rel" = "null" ]; then
+              summary "- ⚠️ $label: no release found"; return; fi
+            tag=$(echo "$rel"  | jq -r '.tag_name')
+            name=$(echo "$rel" | jq -r '.name // .tag_name')
+            url=$(echo "$rel"  | jq -r '.html_url')
+            date=$(echo "$rel" | jq -r '.published_at[:10]')
+            local assets
+            assets=$(echo "$rel" | jq -r '.assets[:10][] | "- [\(.name)](\(.browser_download_url))"')
+            notify "[Release] $label: $tag" \
+              "$(printf '**%s** – new release: **%s** (%s)\n\n%s\n\nFiles:\n%s\n' "$owner_repo" "$name" "$date" "$url" "${assets:-–}")"
+          }
+
+          summary "### Kernel sources"
+          check_commits "Adriano (Coding-BR)" "Coding-BR/OnePlus_KernelSU_SUSFS"
+          check_commits "WildKernels"         "WildKernels/OnePlus_KernelSU_SUSFS"
+          summary ""
+          summary "### Releases"
+          check_release "Adriano (Coding-BR)" "Coding-BR/OnePlus_KernelSU_SUSFS"
+          check_release "KernelSU-Next"       "KernelSU-Next/KernelSU-Next"
+          check_release "SuSFS module"        "sidex15/susfs4ksu-module"
+
+          summary ""
+          summary "**New: $NEW_COUNT**"
+
+          # Fallback: if Issues are off, fail the run so GitHub emails you anyway.
+          if [ "$FAILED_NOTIFY" = "1" ]; then
+            echo "::error::There are updates, but no issue could be created. See the run summary."
+            exit 1
+          fi

@@ -11,12 +11,15 @@ permissions:
 
 on:
   schedule:
-    - cron: '17 6 * * *' # daily, 06:17 UTC (08:17 German summer time)
+    # Two daily slots: GitHub sometimes drops scheduled runs; the second one catches up.
+    # Duplicates are harmless (existing issues are only updated).
+    - cron: '17 6 * * *'  # 06:17 UTC (07:17 CET / 08:17 CEST)
+    - cron: '47 16 * * *' # 16:47 UTC (17:47 CET / 18:47 CEST)
   workflow_dispatch:
 
 jobs:
   watch:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
